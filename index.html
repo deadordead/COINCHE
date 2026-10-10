@@ -137,6 +137,8 @@ button:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
 .log .row{display:flex;gap:6px}
 .log .row b{color:var(--ink);font-family:var(--serif)}
 .log .status{margin-top:8px;color:var(--ink);font-size:1.02rem}
+.log .tap{display:inline-block;margin-top:6px;padding:7px 16px;border-radius:999px;background:var(--brass);color:var(--brass-ink);font-weight:700;white-space:nowrap;animation:tapPulse 1.6s ease-in-out infinite}
+@keyframes tapPulse{50%{transform:scale(1.06)}}
 
 /* cartes */
 .card{--w:58px;width:var(--w);height:calc(var(--w)*1.45);background:var(--card);border-radius:calc(var(--w)*.1);
@@ -879,6 +881,9 @@ if (typeof module !== 'undefined') module.exports = E;
 <script>
 (function(){
 const KEY='coinche-partie-v1';
+const SKEY='coinche-stats-v1';
+function getStats(){try{const o=JSON.parse(localStorage.getItem(SKEY)||'null');if(o&&typeof o==='object')return{hands:o.hands|0,wins:o.wins|0,losses:o.losses|0}}catch(e){}return{hands:0,wins:0,losses:0}}
+function putStats(s){try{localStorage.setItem(SKEY,JSON.stringify(s))}catch(e){}}
 let NAMES=['Vous','Mado','Lucie','Gaspard'];
 const DEFAULT_NAMES=NAMES.slice();
 const $=id=>document.getElementById(id);
@@ -946,7 +951,7 @@ function render(){
   // sièges
   for(let p=0;p<4;p++){
     const el=$('seat'+p);
-    const active=R&&(R.phase==='bidding'||R.phase==='play')&&R.turn===p&&!UI.showTrick&&!UI.dealing;
+    const active=R&&(R.phase==='bidding'||R.phase==='play')&&R.turn===p&&!UI.showTrick&&!UI.dealing&&!UI.awaitTap;
     el.classList.toggle('active',!!active);
     let html=`<div class="name">${p===0?esc(NAMES[0]||'Vous'):esc(NAMES[p])}${p===2?' <small>(partenaire)</small>':''}</div>`;
     if(p!==0&&R){const n=R.hands[p].length;html+=`<div class="backs">${'<i></i>'.repeat(n)}</div>`}
@@ -961,7 +966,7 @@ function render(){
 }
 function renderCenter(){
   const R=G.round,el=$('center');if(!R){el.innerHTML='';return}
-  if(R.phase==='bidding'||R.phase==='redeal'){
+  if(R.phase==='bidding'||R.phase==='redeal'||UI.awaitTap){
     const nRows=window.innerHeight<700?4:6;
     let rows=R.bids.slice(-nRows).map((b,i,arr)=>{const cls=['brow',(b.p&1)?'them':'us'];if(b.type==='pass')cls.push('pass');if(b.type==='coinche'||b.type==='surcoinche')cls.push('co');if(i===arr.length-1)cls.push('last');
       return `<div class="${cls.join(' ')}"><span class="who">${b.p===0?esc(NAMES[0]||'Vous'):esc(NAMES[b.p])}</span><span class="what">${bidHTML(b)}</span></div>`}).join('');
@@ -971,6 +976,7 @@ function renderCenter(){
     else if(UI.dealing)st='';
     else if(R.turn===0)st='À vous de parler.';
     else st=`${esc(NAMES[R.turn])} réfléchit…`;
+    if(UI.awaitTap)st=(R.phase==='redeal'?'Tout le monde passe.<br>':'')+`<span class="tap">Touchez pour ${R.phase==='redeal'?'redistribuer':'jouer'}</span>`;
     el.innerHTML=`<div class="log">${UI.freshGame?'<div class="fresh">Nouvelle partie !</div>':''}${rows||`<div>${R.dealer===0?'Vous distribuez':esc(NAMES[R.dealer])+' distribue'}…</div>`}<div class="status">${st}</div></div>`;
     return;
   }
@@ -993,7 +999,7 @@ function cardCls(c,extra){const s=E.S(c);const m=G&&G.round&&G.round.contract?G.
 function renderHand(){
   const R=G.round,el=$('hand');if(!R){el.innerHTML='';return}
   const hand=sortHand(R.hands[0]);
-  const myTurn=R.phase==='play'&&R.turn===0&&!UI.showTrick;
+  const myTurn=R.phase==='play'&&R.turn===0&&!UI.showTrick&&!UI.awaitTap;
   const legal=myTurn?E.legal(R.hands[0],R.cur.cards,R.cur.leader,R.contract.mode,0):[];
   const avail=Math.min(el.clientWidth||360,560)-16;
   const w=Math.min(74,Math.max(46,Math.floor(avail/5.2)));
@@ -1024,7 +1030,7 @@ function renderActions(){
   if(R.phase==='bidding'&&R.turn===0&&!UI.dealing){const had=!!el.querySelector('.bidpanel');el.innerHTML=bidPanel();if(had)el.querySelector('.bidpanel').style.animation='none';bindBid();return}
   if(R.phase==='play'||R.phase==='scored'){
     const live=`<div class="live"><span class="t">Points de la donne</span><span>Nous <b>${R.pts[0]}</b> · Eux <b>${R.pts[1]}</b></span></div>`;
-    const canHint=R.phase==='play'&&R.turn===0&&!UI.showTrick;
+    const canHint=R.phase==='play'&&R.turn===0&&!UI.showTrick&&!UI.awaitTap;
     el.innerHTML=`<div class="tools"><div class="left">${live}<button class="btn small" id="lastBtn" ${R.tricks.length?'':'disabled'}>Dernier pli</button></div>${canHint?'<button class="btn small" id="hintBtn">Conseil</button>':''}</div>`;
     const lb=$('lastBtn');if(lb)lb.onclick=showLastTrick;
     const hb=$('hintBtn');if(hb)hb.onclick=()=>{hb.disabled=true;hb.textContent='…';setTimeout(()=>{const r=E.chooseCard(G,0,{timeMs:700,minN:80,maxN:600});UI.hint=r.card;render()},30)};
@@ -1096,6 +1102,7 @@ function step(){
   if(UI.dealing){const t=animateDeal();UI.timer=setTimeout(()=>{UI.dealing=false;UI.freshGame=false;step()},t+d(UI.freshGame?900:300));return}
   const r=G.round;
   if(UI.showTrick)return;
+  if(UI.awaitTap)return;
   if(r.phase==='bidding'){
     if(r.turn===0)return;
     UI.timer=setTimeout(()=>{const p=r.turn;const a=E.aiBid(G,p);doBid(p,a)},d(750));
@@ -1114,7 +1121,7 @@ function doBid(p,a){
   const st=E.applyBid(G,p,a);
   UI.bubbles[p]={text:bidHTML(a),why:a.why,strong:a.type==='coinche'||a.type==='surcoinche'};
   save();
-  if(st==='play'){render();UI.timer=setTimeout(()=>{clearBubbles();step()},d(1300));return}
+  if(st==='play'||st==='redeal'){UI.awaitTap=true;UI.awaitSince=performance.now();render();return}
   step();
 }
 function doCard(p,c){
@@ -1138,6 +1145,7 @@ function showSummary(){
   const R=G.round,res=R.result,c=R.contract;const lv=c.level===E.CAPOT?'capot':c.level;
   const taker=c.team===0?'Nous':'Eux';
   const ok=res.made;
+  if(!R.counted){R.counted=true;const st=getStats();st.hands++;putStats(st);save()}
   const o=openSheet(`<h2>${G.over?'Dernière donne':'Donne terminée'}</h2>
   <p>Contrat ${lv} ${modeHTML(c.mode)} ${c.coinche>1?(c.coinche===2?'coinché ':'surcoinché '):''}pris par ${c.p===0?'vous':esc(NAMES[c.p])}<span class="verdict ${ok?'ok':'ko'}">${ok?'Réussi':'Chuté'}</span></p>
   <table><tr><th></th><th>Nous</th><th>Eux</th></tr>
@@ -1153,6 +1161,7 @@ function showSummary(){
 }
 function showGameOver(){
   const win=G.scores[0]>G.scores[1];const H=G.history;
+  if(!G.counted){G.counted=true;const st=getStats();if(win)st.wins++;else st.losses++;putStats(st);save()}
   const ours=H.filter(h=>h.contract.team===0),oursOk=ours.filter(h=>h.made).length;
   const coWon=H.filter(h=>h.contract.coinche>1&&((h.contract.team===0)===h.made)).length;
   const o=openSheet(`<div class="final ${win?'win':'lose'}"><div class="medal" aria-hidden="true">${win?'♠':'♣'}</div>
@@ -1199,7 +1208,8 @@ function showMenu(){
     <label for="nm1">Adversaire après vous</label><input id="nm1" maxlength="14" autocomplete="off" value="${esc(NAMES[1])}">
     <label for="nm3">Adversaire avant vous</label><input id="nm3" maxlength="14" autocomplete="off" value="${esc(NAMES[3])}"></div>
   <h3>Nouvelle partie</h3><div class="seg" id="tgt">${[1000,1500,2000].map(t=>`<button data-v="${t}" aria-pressed="${G.target===t}">${t} pts</button>`).join('')}</div>
-  <div class="actions-row"><button class="btn" id="rulesBtn">Règles</button><button class="btn" id="newBtn">Recommencer</button><button class="btn primary" id="closeM">Reprendre</button></div>`);
+  <div class="actions-row"><button class="btn" id="rulesBtn">Règles</button><button class="btn" id="newBtn">Recommencer</button><button class="btn primary" id="closeM">Reprendre</button></div>
+  ${(()=>{const s=getStats();return `<p class="muted" style="text-align:center;font-size:.75rem;opacity:.6;margin:14px 0 0">${s.hands} donne${s.hands>1?'s':''} · ${s.wins+s.losses} partie${s.wins+s.losses>1?'s':''} · ${s.wins} V – ${s.losses} D</p>`})()}`);
   let tgt=G.target;
   o.querySelectorAll('#spd button').forEach(b=>b.onclick=()=>{UI.speed=b.dataset.v;save();showMenu()});
   o.querySelectorAll('#why button').forEach(b=>b.onclick=()=>{UI.why=b.dataset.v==='1';save();render();showMenu()});
@@ -1215,13 +1225,15 @@ function showRules(){
   openSheet(`<div class="rules"><h2>Règles appliquées</h2>
   <h3>Enchères</h3><p>De 80 à 160 par paliers de 10, puis capot (tous les plis). Atout à une couleur, tout atout ou sans atout. Trois passes après une annonce ferment l’enchère ; quatre passes d’entrée et on redistribue. Un adversaire du preneur peut coincher (×2), puis l’équipe preneuse peut surcoincher (×4) ; une coinche ferme les enchères.</p>
   <h3>Jeu de la carte</h3><ul><li>Fournir obligatoirement à la couleur demandée.</li><li>À l’atout (et en tout atout), monter sur la meilleure carte si on le peut.</li><li>Sans la couleur : couper, surcouper si possible, sinon sous-couper. Libre si le partenaire est maître.</li><li>Belote-rebelote (roi et dame d’atout) : 20 points, annoncée automatiquement.</li></ul>
-  <h3>Valeur des cartes</h3><p>Atout : V 20, 9 14, A 11, 10 10, R 4, D 3. Hors atout : A 11, 10 10, R 4, D 3, V 2. Tout atout : V 14, 9 9, A 6, 10 5, R 3, D 1. Sans atout : A 19, 10 10, R 4, D 3, V 2. Dix de der : 10. Total : 162.</p>
+  <h3>Valeur des cartes</h3><p><b>Atout :</b> V 20, 9 14, A 11, 10 10, R 4, D 3<br><b>Hors atout :</b> A 11, 10 10, R 4, D 3, V 2<br><b>Tout atout :</b> V 14, 9 9, A 6, 10 5, R 3, D 1<br><b>Sans atout :</b> A 19, 10 10, R 4, D 3, V 2<br><b>Dix de der :</b> 10<br><b>Total :</b> 162</p>
   <h3>Marque</h3><p>Le preneur doit atteindre son contrat (belote comprise) et faire plus que la défense. Réussi : contrat + points faits pour le preneur, points faits pour la défense. Chuté : 160 + contrat pour la défense. Coinché ou surcoinché : le gagnant marque 160 + contrat ×2 ou ×4. La belote reste à l’équipe qui l’a.</p>
   <h3>Les adversaires</h3><p>Ils évaluent leur main dans chaque atout, lisent vos enchères et vos passes, et relancent leur partenaire selon ce qu’ils apportent (as, valet ou 9 d’atout, belote, coupes). Pour coincher, surcoincher ou tenter un capot, et pour chaque carte jouée, ils simulent des centaines de donnes cohérentes avec tout ce qui a été vu : couleurs manquantes, refus de monter, annonces. Chacun a son tempérament : ${esc(NAMES[1])} prend plus de risques, ${esc(NAMES[3])} en prend moins.</p></div>
   <div class="actions-row"><button class="btn primary" id="closeR">Fermer</button></div>`);
   $('closeR').onclick=showMenu;
 }
 $('menuBtn').onclick=showMenu;
+function continueAfterTap(){UI.awaitTap=false;clearBubbles();if(G.round&&G.round.phase==='redeal')G.round=null;step()}
+document.addEventListener('click',e=>{if(!UI.awaitTap||performance.now()-(UI.awaitSince||0)<400)return;if(e.target.closest('#menuBtn')||!$('overlay').hidden)return;continueAfterTap()});
 window.addEventListener('resize',()=>{if(G)render()});
 
 /* ---------- démarrage ---------- */
